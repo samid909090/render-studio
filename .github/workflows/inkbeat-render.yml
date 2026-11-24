@@ -29,11 +29,11 @@ jobs:
         run: |
           CHROME=$(ls -d $HOME/.cache/ms-playwright/chromium-*/chrome-linux/chrome | head -1)
           echo "CHROME=$CHROME"
-          for f in 10 300 580; do
-            npx remotion still src/index.ts Molasses smoke-f$f.png --frame=$f --scale=0.5 --gl=angle --timeout=240000 --browser-executable=$CHROME
+          for f in 10 750 1490; do
+            npx remotion still src/index.ts Crash smoke-f$f.png --frame=$f --scale=0.5 --gl=angle --timeout=240000 --browser-executable=$CHROME
           done
           ls -la smoke-f*.png
-          for f in 10 300 580; do test -s smoke-f$f.png; done
+          for f in 10 750 1490; do test -s smoke-f$f.png; done
           echo "SMOKE OK: WebGL context works, 3 distinct stills written"
       - uses: actions/upload-artifact@v4
         with:
@@ -46,14 +46,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { idx: 0, frames: "0-73" }
-          - { idx: 1, frames: "74-147" }
-          - { idx: 2, frames: "148-221" }
-          - { idx: 3, frames: "222-295" }
-          - { idx: 4, frames: "296-369" }
-          - { idx: 5, frames: "370-443" }
-          - { idx: 6, frames: "444-517" }
-          - { idx: 7, frames: "518-591" }
+          - { idx: 0, frames: "0-124", expect: "125" }
+          - { idx: 1, frames: "125-249", expect: "125" }
+          - { idx: 2, frames: "250-374", expect: "125" }
+          - { idx: 3, frames: "375-499", expect: "125" }
+          - { idx: 4, frames: "500-624", expect: "125" }
+          - { idx: 5, frames: "625-749", expect: "125" }
+          - { idx: 6, frames: "750-874", expect: "125" }
+          - { idx: 7, frames: "875-999", expect: "125" }
+          - { idx: 8, frames: "1000-1124", expect: "125" }
+          - { idx: 9, frames: "1125-1249", expect: "125" }
+          - { idx: 10, frames: "1250-1374", expect: "125" }
+          - { idx: 11, frames: "1375-1499", expect: "125" }
     steps:
       - uses: actions/checkout@v4
       - name: Unpack project bundle
@@ -71,13 +75,25 @@ jobs:
         working-directory: inkbeat
         run: |
           CHROME=$(ls -d $HOME/.cache/ms-playwright/chromium-*/chrome-linux/chrome | head -1)
-          npx remotion render src/index.ts Molasses chunk-${{ matrix.idx }}.mp4 --frames=${{ matrix.frames }} --muted --gl=angle --timeout=240000 --concurrency=2 --crf=16 --browser-executable=$CHROME
+          npx remotion render src/index.ts Crash chunk-${{ matrix.idx }}.mp4 --frames=${{ matrix.frames }} --muted --gl=angle --timeout=240000 --concurrency=2 --crf=16 --browser-executable=$CHROME
+      # FIX (Crash run, two stacked bugs in the Molasses workflow):
+      #  1) Run #5's chunk jobs died at this verify step with exit code 127: ffprobe is
+      #     not installed on ubuntu-latest and the old workflow never installed ffmpeg.
+      #  2) Even with ffprobe present, its csv output is "74," (trailing comma, proven
+      #     locally with ffprobe 8.1.2), so test "$n" = "74" could never pass - the
+      #     reported "count mismatch". Fix: install ffmpeg, and strip the count to
+      #     digits before comparing. Expected count is carried per-chunk (end-start+1).
+      - name: Install ffmpeg (ffprobe for the verify step)
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y ffmpeg
+          ffprobe -version | head -1
       - name: Verify chunk frame count
         working-directory: inkbeat
         run: |
-          n=$(ffprobe -v error -select_streams v:0 -count_frames -show_entries stream=nb_read_frames -of csv=p=0 chunk-${{ matrix.idx }}.mp4)
-          echo "chunk ${{ matrix.idx }} frames=$n"
-          test "$n" = "74"
+          n=$(ffprobe -v error -select_streams v:0 -count_frames -show_entries stream=nb_read_frames -of csv=p=0 chunk-${{ matrix.idx }}.mp4 | tr -cd '0-9')
+          echo "chunk ${{ matrix.idx }} frames=$n expect=${{ matrix.expect }}"
+          test "$n" = "${{ matrix.expect }}"
       - uses: actions/upload-artifact@v4
         with:
           name: chunk-${{ matrix.idx }}
@@ -89,15 +105,21 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: chunks
+      # FIX (Crash run): finalize also uses ffmpeg/ffprobe - install before concat.
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y ffmpeg
+          ffmpeg -version | head -1
       - name: Concat and publish to release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           ls -R chunks
-          for i in 0 1 2 3 4 5 6 7; do echo "file 'chunks/chunk-$i/chunk-$i.mp4'"; done > list.txt
-          ffmpeg -y -v error -f concat -safe 0 -i list.txt -c:v libx264 -crf 16 -pix_fmt yuv420p -r 30 molasses-silent.mp4
-          n=$(ffprobe -v error -select_streams v:0 -count_frames -show_entries stream=nb_read_frames -of csv=p=0 molasses-silent.mp4)
-          echo "final frames=$n"; test "$n" = "592"
-          tag="inkbeat-molasses-${{ github.run_number }}"
-          gh release create "$tag" molasses-silent.mp4 --repo ${{ github.repository }} --title "Inkbeat Molasses render ${{ github.run_number }}" --notes "Silent video; soundtrack is muxed locally."
+          for i in 0 1 2 3 4 5 6 7 8 9 10 11; do echo "file 'chunks/chunk-$i/chunk-$i.mp4'"; done > list.txt
+          ffmpeg -y -v error -f concat -safe 0 -i list.txt -c:v libx264 -crf 16 -pix_fmt yuv420p -r 30 crash-silent.mp4
+          n=$(ffprobe -v error -select_streams v:0 -count_frames -show_entries stream=nb_read_frames -of csv=p=0 crash-silent.mp4 | tr -cd '0-9')
+          echo "final frames=$n"; test "$n" = "1500"
+          tag="inkbeat-crash-${{ github.run_number }}"
+          gh release create "$tag" crash-silent.mp4 --repo ${{ github.repository }} --title "Inkbeat Crash render ${{ github.run_number }}" --notes "Silent video; soundtrack is muxed locally."
           echo "RELEASE_TAG=$tag"
