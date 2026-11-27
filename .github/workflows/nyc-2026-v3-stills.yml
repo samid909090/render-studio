@@ -1,0 +1,73 @@
+name: nyc-2026-v3-stills
+# Nyc2026 V3 — ZERO-DEFECT FIX PASS, frames-only verification stills.
+# Renders FIVE proof stills of composition Nyc2026 at full resolution
+# (1080x1920, scale 1), one per risky beat, and publishes them as
+# release `nyc-2026-v3stills-2`:
+#   f681  — old man "just smiles": face-bone smile + hand/hot dog
+#           reframed INSIDE the frame (L6 camera lookOff 0.30, fov 40)
+#   f827  — Danny "freezes. No cash.": shock face, uneven shrug,
+#           wallet gripped in both hands (hold-wrist re-aim), wallet
+#           tipped with fake notes visible, duffel across his side
+#   f1018 — L9 snap-up + the old man's dialogue/smile beat
+#   f1458 — L13 queue startle
+#   f1533 — L13 spill (bag on the ground, wallets out)
+# Modelled on the proven nyc-2026-render smoke job (same bundle
+# reassembly, Node 22, npm ci, Playwright full Chromium, same
+# `remotion still` command + --gl=angle). NO chunk/finalize jobs —
+# this workflow never renders the film.
+# Upload order (same discipline as the render workflows): commit
+# THIS file to .github/workflows/nyc-2026-v3-stills.yml first,
+# DISABLE the workflow, upload the bundle parts
+# (nyc-2026-v3-bundle.part-00..03) to the repo root, ENABLE the
+# workflow, then re-upload the LAST part (or use Run workflow) to
+# trigger exactly one run with all parts present.
+# The stills are RAW (ungraded), exactly like the proofs Abid
+# judged — grade locally with grade_nyc.py if a board needs the
+# finish look.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "nyc-2026-v3-bundle.part-*"
+permissions:
+  contents: write
+jobs:
+  stills:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reassemble and unpack project bundle
+        run: |
+          cat nyc-2026-v3-bundle.part-* > nyc-2026-v3-bundle.tar.gz
+          tar xzf nyc-2026-v3-bundle.tar.gz
+          ls video-nyc-2026/ video-nyc-2026/remotion/
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install
+        working-directory: video-nyc-2026/remotion
+        run: npm ci --no-audit --no-fund
+      - name: Install full Chromium (Playwright) for WebGL
+        working-directory: video-nyc-2026/remotion
+        run: |
+          npx -y playwright@1.49.1 install --with-deps chromium
+          ls -d $HOME/.cache/ms-playwright/chromium-*/chrome-linux/chrome
+      - name: Render proof stills (full res 1080x1920)
+        working-directory: video-nyc-2026/remotion
+        run: |
+          CHROME=$(ls -d $HOME/.cache/ms-playwright/chromium-*/chrome-linux/chrome | head -1)
+          echo "CHROME=$CHROME"
+          for fr in 681 827 1018 1458 1533; do
+            npx remotion still src/index.ts Nyc2026 f$fr.png --frame=$fr --gl=angle --timeout=600000 --browser-executable=$CHROME
+            test -s f$fr.png
+          done
+          ls -la f681.png f827.png f1018.png f1458.png f1533.png
+          echo "STILLS OK: all five proof frames written"
+      - name: Publish release (5 proof stills)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="nyc-2026-v3stills-2"
+          gh release create "$tag" video-nyc-2026/remotion/f681.png video-nyc-2026/remotion/f827.png video-nyc-2026/remotion/f1018.png video-nyc-2026/remotion/f1458.png video-nyc-2026/remotion/f1533.png --repo ${{ github.repository }} --title "Nyc2026 V3 zero-defect fix — proof stills f681/f827/f1018/f1458/f1533" --notes "Frames-only verification of the V3 zero-defect fix pass: (1) full bone-level FACE pass in glbCast — the Rocketbox avatars have NO morph targets (FBX probe), the face is a 27-bone rig; the old smile code pushed mouth corners along head-local +Y (forward, out of the face) instead of +X (up) — now corners/cheeks/lids/brows all move on measured axes (harness-verified: corners +4.5mm up, cheeks +3.3mm, Duchenne lid squeeze). (2) Danny freeze: shock face + UNEVEN clavicle shrug (L +22mm / R +12mm) + hold-wrist re-aiming (finger direction 40deg -> 23deg off forward: a grip, not a dangle) + ikSoft 0.3 -> 0.12 on the freeze window so the hands actually land on the wallet. (3) Wallet tipped 0.5 rad toward Danny while open, fake notes visible inside. (4) Duffel long axis ACROSS his side (was along facing = end-on ball), hung at 0.50m/hip height with droop, strap thinner + darker. (5) L6 camera reframed (lookOff 0.60 -> 0.30, fov 38 -> 40, pulled back) + smile-window hand raise — hand + hot dog measure 10deg off-axis vs 20deg half-FOV: inside the frame. Locked layers untouched (script, V2 voice stem + 1750f timings, beats, set, END RULE, audio md5 113159a6ee0fd1fefcdad62ed33eff81). RAW stills, ungraded. See PREP_REPORT_V3FILM.md in boards-nyc-2026/."
+          echo "RELEASE_TAG=$tag"
